@@ -1,0 +1,188 @@
+import tkinter as tk
+from tkinter import ttk, messagebox
+from pulp import LpProblem, LpVariable, LpMaximize, LpInteger, LpStatus
+from pulp import COIN_CMD
+import os
+import sys
+
+def validasi_angka(P):
+    try:
+        return P == "" or float(P) >= 0
+    except ValueError:
+        return False
+
+def hitung_volume_dan_bahan(panjang, lebar, tinggi):
+    #Hitung Volume Batako
+    volume_m3 = (panjang * lebar * tinggi) / 1_000_000
+     # Hitung Berat Batako
+    berat_total = volume_m3 * 2200 #2200 adalah berat campuran bahan (semen + pasir) dalam 1 meter kubik batako.
+     # Hitung Kebutuhan Bahan Baku per Batako (rasio 1:7 => 1/8 semen, 7/8 pasir)
+    semen = berat_total * (1 / 8)
+    pasir = berat_total * (7 / 8)
+    return round(volume_m3, 4), round(semen, 2), round(pasir, 2)
+
+def optimasi_produksi():
+    try:
+        #Input Data Awal
+        stok_semen = float(entry_stok_semen.get().strip())
+        stok_pasir = float(entry_stok_pasir.get().strip())
+        p = float(entry_panjang.get().strip())
+        l = float(entry_lebar.get().strip())
+        t = float(entry_tinggi.get().strip())
+
+        if stok_semen <= 0 or stok_pasir <= 0 or p <= 0 or l <= 0 or t <= 0:
+            raise ValueError("Semua nilai harus lebih dari 0.")
+
+        volume, semen_per_batako, pasir_per_batako = hitung_volume_dan_bahan(p, l, t)
+
+        #Bangun model LP
+        model = LpProblem("Optimasi_Batako", LpMaximize)
+        jumlah = LpVariable("Jumlah_Batako", lowBound=0, cat=LpInteger)
+        #Fumgsi objektif (memkasimalkan jumlah produksi)
+        model += jumlah
+        #kendala
+        model += jumlah * semen_per_batako <= stok_semen
+        model += jumlah * pasir_per_batako <= stok_pasir
+
+       # Lokasi CBC solver, mendukung saat build .exe (sys._MEIPASS)
+        base_path = getattr(sys, '_MEIPASS', os.path.abspath("."))
+        cbc_path = os.path.join(base_path, "cbc.exe")
+        if not os.path.exists(cbc_path):
+            raise FileNotFoundError("cbc.exe tidak ditemukan di direktori yang sama dengan aplikasi.")
+
+        status = model.solve(COIN_CMD(path=cbc_path, msg=False))
+
+        if LpStatus[model.status] != "Optimal":
+            raise RuntimeError("Tidak ditemukan solusi optimal.")
+
+
+        hasil = int(jumlah.varValue)
+        total_semen = hasil * semen_per_batako
+        total_pasir = hasil * pasir_per_batako
+
+        output1_text.set(
+            f"Ukuran Batako: {p} x {l} x {t} cm\n"
+            f"Volume per batako: {volume} m³\n"
+            f"Kebutuhan per batako:\n"
+            f"  Semen: {semen_per_batako} kg\n"
+            f"  Pasir: {pasir_per_batako} kg\n\n"
+            f"Jumlah optimal: {hasil} buah\n"
+            f"Total Semen: {total_semen:.2f} kg\n"
+            f"Total Pasir: {total_pasir:.2f} kg"
+        )
+
+    except Exception as e:
+        messagebox.showerror("Kesalahan", f"{type(e).__name__}: {str(e)}")
+
+def hitung_bahan_dari_jumlah():
+    try:
+        jumlah = float(entry_jumlah_batako.get().strip())
+        p = float(entry_panjang2.get().strip())
+        l = float(entry_lebar2.get().strip())
+        t = float(entry_tinggi2.get().strip())
+
+        if jumlah <= 0 or p <= 0 or l <= 0 or t <= 0:
+            raise ValueError("Semua nilai harus lebih dari 0.")
+
+        volume, semen_per_batako, pasir_per_batako = hitung_volume_dan_bahan(p, l, t)
+        total_semen = jumlah * semen_per_batako
+        total_pasir = jumlah * pasir_per_batako
+
+        output2_text.set(
+            f"Ukuran Batako: {p} x {l} x {t} cm\n"
+            f"Volume per batako: {volume} m³\n"
+            f"Kebutuhan per batako:\n"
+            f"  Semen: {semen_per_batako} kg\n"
+            f"  Pasir: {pasir_per_batako} kg\n\n"
+            f"Untuk {jumlah} batako:\n"
+            f"  Total Semen: {total_semen:.2f} kg\n"
+            f"  Total Pasir: {total_pasir:.2f} kg"
+        )
+
+    except Exception as e:
+        messagebox.showerror("Kesalahan", f"{type(e).__name__}: {str(e)}")
+
+def clear_input_tab1():
+    for e in [entry_stok_semen, entry_stok_pasir, entry_panjang, entry_lebar, entry_tinggi]:
+        e.delete(0, tk.END)
+    output1_text.set("")
+
+def clear_input_tab2():
+    for e in [entry_jumlah_batako, entry_panjang2, entry_lebar2, entry_tinggi2]:
+        e.delete(0, tk.END)
+    output2_text.set("")
+
+def buat_label_entry(parent, teks, baris):
+    ttk.Label(parent, text=teks).grid(row=baris, column=0, sticky='w', padx=5, pady=4)
+    ent = ttk.Entry(parent, validate="key", validatecommand=(vcmd, "%P"))
+    ent.grid(row=baris, column=1, padx=5, pady=4)
+    return ent
+
+# === GUI ===
+root = tk.Tk()
+root.title("🔧 Sistem Optimasi Produksi Batako")
+root.geometry("750x550")
+root.configure(bg="#f0f0f0")
+root.minsize(600, 500)
+
+root.bind("<F11>", lambda e: root.attributes("-fullscreen", not root.attributes("-fullscreen")))
+root.bind("<Escape>", lambda e: root.attributes("-fullscreen", False))
+
+style = ttk.Style()
+style.theme_use("clam")
+style.configure("TButton", foreground="white", background="#007acc", font=("Segoe UI", 10, "bold"))
+style.map("TButton", background=[("active", "#005f99")])
+style.configure("TLabel", background="#f0f0f0", font=("Segoe UI", 10))
+style.configure("Title.TLabel", font=("Segoe UI", 18, "bold"), background="#f0f0f0", foreground="#333")
+
+vcmd = root.register(validasi_angka)
+
+ttk.Label(root, text="🔧 Sistem Optimasi Produksi Batako", style="Title.TLabel").pack(pady=15)
+
+notebook = ttk.Notebook(root)
+notebook.pack(expand=True, fill="both", padx=10, pady=10)
+
+# === Tab 1 ===
+tab1 = ttk.Frame(notebook)
+notebook.add(tab1, text="Optimasi Produksi")
+frame1 = ttk.Frame(tab1, padding=10)
+frame1.pack(pady=5)
+
+entry_stok_semen = buat_label_entry(frame1, "Stok Semen (kg):", 0)
+entry_stok_pasir = buat_label_entry(frame1, "Stok Pasir (kg):", 1)
+entry_panjang = buat_label_entry(frame1, "Panjang Batako (cm):", 2)
+entry_lebar = buat_label_entry(frame1, "Lebar Batako (cm):", 3)
+entry_tinggi = buat_label_entry(frame1, "Tinggi Batako (cm):", 4)
+
+ttk.Button(tab1, text="Hitung Optimasi", command=optimasi_produksi).pack(pady=(10, 5))
+ttk.Button(tab1, text="Hapus", command=clear_input_tab1).pack()
+
+
+output1_text = tk.StringVar()
+tk.Label(tab1, 
+         textvariable=output1_text, 
+         bg="white", 
+         justify="left", 
+         anchor="nw", 
+         padx=10, 
+         pady=10).pack(fill="both", expand=True)
+
+# === Tab 2 ===
+tab2 = ttk.Frame(notebook)
+notebook.add(tab2, text="Hitung Bahan")
+frame2 = ttk.Frame(tab2, padding=10)
+frame2.pack(pady=5)
+
+entry_jumlah_batako = buat_label_entry(frame2, "Jumlah Batako:", 0)
+entry_panjang2 = buat_label_entry(frame2, "Panjang Batako (cm):", 1)
+entry_lebar2 = buat_label_entry(frame2, "Lebar Batako (cm):", 2)
+entry_tinggi2 = buat_label_entry(frame2, "Tinggi Batako (cm):", 3)
+
+ttk.Button(tab2, text="Hitung Bahan", command=hitung_bahan_dari_jumlah).pack(pady=(10, 5))
+ttk.Button(tab2, text="Hapus", command=clear_input_tab2).pack()
+
+
+output2_text = tk.StringVar()
+tk.Label(tab2, textvariable=output2_text, bg="white", justify="left", anchor="nw", padx=10, pady=10).pack(fill="both", expand=True)
+
+root.mainloop()
